@@ -10,9 +10,7 @@ library
     Base32
     Eval
     Expr
-    FileStore
     Key
-    Object
     Store
     Value
   build-depends:    
@@ -38,9 +36,11 @@ library
     FunctionalDependencies
     GeneralizedNewtypeDeriving
     MultiParamTypeClasses
+    NamedFieldPuns
     NoFieldSelectors
     OverloadedRecordDot
     OverloadedStrings
+    ScopedTypeVariables
     TypeApplications
 
 executable mininix
@@ -57,7 +57,7 @@ executable mininix
     text
   hs-source-dirs:   app
   default-language: Haskell2010
-  ghc-options: -Wall -Werror
+  ghc-options: -Wall -Werror -threaded
   default-extensions:
     NoFieldSelectors
     OverloadedRecordDot

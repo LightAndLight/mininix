@@ -7,43 +7,41 @@ import qualified Data.Maybe as Maybe
 import Data.Text (Text)
 import Expr (Expr)
 import qualified Expr
-import Key (Key)
-import Object (Object)
-import qualified Object
-import Store (MonadStore, put)
+import Store (Store, put)
+import qualified Store
 import Value (Value)
 import qualified Value
 
-eval :: (MonadStore Key Object m, MonadIO m) => [(Text, Value)] -> Expr -> m Value
-eval ctx expr =
+eval :: MonadIO m => Store -> [(Text, Value)] -> Expr -> m Value
+eval store ctx expr =
   case expr of
     Expr.Var var ->
       pure . Maybe.fromMaybe undefined $ lookup var ctx
     Expr.Lam name body ->
       pure $ Value.Lam ctx name body
     Expr.Let name value body -> do
-      value' <- eval ctx value
-      eval ((name, value') : ctx) body
+      value' <- eval store ctx value
+      eval store ((name, value') : ctx) body
     Expr.App f x -> do
-      f' <- eval ctx f
-      x' <- eval ctx x
+      f' <- eval store ctx f
+      x' <- eval store ctx x
       case f' of
         Value.Lam ctx' name body ->
-          eval ((name, x') : ctx') body
+          eval store ((name, x') : ctx') body
         _ ->
           undefined
     Expr.Record fields -> do
-      fields' <- (traverse . traverse) (eval ctx) fields
+      fields' <- (traverse . traverse) (eval store ctx) fields
       pure $ Value.Record fields'
     Expr.Project record field -> do
-      record' <- eval ctx record
+      record' <- eval store ctx record
       case record' of
         Value.Record fields ->
           pure . Maybe.fromMaybe undefined $ lookup field fields
         _ ->
           undefined
     Expr.Action args -> do
-      args' <- eval ctx args
+      args' <- eval store ctx args
       case args' of
         Value.Record [("inputs", Value.Record inputs), ("builder", builder)] -> do
           inputs' <-
@@ -59,9 +57,9 @@ eval ctx expr =
                 pure key
               _ ->
                 undefined
-          Value.Action <$> put (Object.Action $ Action inputs' builder')
+          liftIO $ Value.Action <$> store.put (Store.Action $ Action inputs' builder')
         _ ->
           undefined
     Expr.File filePath -> do
       contents <- liftIO $ ByteString.readFile filePath
-      Value.Object <$> put (Object.Object contents)
+      liftIO $ Value.Object <$> store.put (Store.Object contents)
