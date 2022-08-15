@@ -7,7 +7,7 @@
 
 module Main where
 
-import Control.Monad (unless, when, (<=<))
+import Control.Monad (unless, when)
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Reader (ReaderT, runReaderT)
 import Control.Monad.Reader.Class (asks)
@@ -144,6 +144,7 @@ run key = do
   do
     path <- keyPath key
     liftIO . putStrLn $ "running action " <> path
+
   mOutputKey <- getMemo key
   case mOutputKey of
     Nothing -> do
@@ -157,9 +158,26 @@ run key = do
               . Map.foldrWithKey (\k (v1, v2) rest -> (v1, k, v2) : rest) []
               <$> getDependencyGraph action
 
+          let -- actions that have no dependencies
+              roots =
+                filter
+                  ( \vertex ->
+                      let (_, _, edges) = nodeFromVertex vertex
+                       in null edges
+                  )
+                  . Graph.vertices
+                  $
+                  -- A -> B when A depends on B
+                  dependencyGraph
+
           do
             liftIO $ putStrLn "  dependencies:"
-            traverse_ ((liftIO . putStrLn . ("  " <>)) <=< keyPath) $ (\(_, k, _) -> k) . nodeFromVertex <$> Graph.reverseTopSort dependencyGraph
+            traverse_
+              ( \vertex -> do
+                  let (_, k, _) = nodeFromVertex vertex
+                  liftIO . putStrLn . ("  " <>) =<< keyPath k
+              )
+              (Graph.reverseTopSort dependencyGraph)
 
           inputs' <-
             traverse
@@ -178,7 +196,7 @@ run key = do
 
           liftIO $ do
             p <- Directory.getPermissions builderExecutable
-            Directory.setPermissions builderExecutable (p {Directory.executable = True})
+            Directory.setPermissions builderExecutable p{Directory.executable = True}
 
           liftIO . putStrLn $
             "running builder: "
@@ -191,10 +209,10 @@ run key = do
                       builderExecutable
                       []
                   )
-                    { Process.std_in = Process.Inherit,
-                      Process.std_out = Process.CreatePipe,
-                      Process.std_err = Process.Inherit,
-                      Process.env = Just inputs'
+                    { Process.std_in = Process.Inherit
+                    , Process.std_out = Process.CreatePipe
+                    , Process.std_err = Process.Inherit
+                    , Process.env = Just inputs'
                     }
                 )
 
@@ -342,7 +360,7 @@ runFileStoreT env (FileStoreT m) = do
 
 main :: IO ()
 main = do
-  let env = FileStoreEnv {storePath = "./store", dbPath = "database.json"}
+  let env = FileStoreEnv{storePath = "./store", dbPath = "database.json"}
   runFileStoreT env $ do
     action <-
       eval [] $
@@ -356,8 +374,8 @@ main = do
           "hello"
           ( EAction
               ( ERecord
-                  [ ("inputs", ERecord []),
-                    ("builder", EFile "./hello.sh")
+                  [ ("inputs", ERecord [])
+                  , ("builder", EFile "./hello.sh")
                   ]
               )
           )
@@ -365,30 +383,22 @@ main = do
             "goodbye"
             ( EAction
                 ( ERecord
-                    [ ("inputs", ERecord []),
-                      ("builder", EFile "./goodbye.sh")
-                    ]
-                )
-            )
-          . ELet
-            "cat"
-            ( EAction
-                ( ERecord
-                    [ ("inputs", ERecord []),
-                      ("builder", EFile "/nix/store/xp5z3k851fs7haqbcwqax1hh4pynzla9-coreutils-9.1/bin/cat")
+                    [ ("inputs", ERecord [])
+                    , ("builder", EFile "./goodbye.sh")
                     ]
                 )
             )
           $ EAction
             ( ERecord
-                [ ( "inputs",
-                    ERecord
-                      [ ("hello", EVar "hello"),
-                        ("goodbye", EVar "goodbye"),
-                        ("PATH", EVar "cat")
+                [
+                  ( "inputs"
+                  , ERecord
+                      [ ("hello", EVar "hello")
+                      , ("goodbye", EVar "goodbye")
+                      , ("cat", EFile "/nix/store/xp5z3k851fs7haqbcwqax1hh4pynzla9-coreutils-9.1/bin/cat")
                       ]
-                  ),
-                  ("builder", EFile "./concat.sh")
+                  )
+                , ("builder", EFile "./concat.sh")
                 ]
             )
 
