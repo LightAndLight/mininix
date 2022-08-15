@@ -8,7 +8,7 @@
       let pkgs = import nixpkgs { inherit system; }; in {
         devShell = pkgs.mkShell {
           buildInputs = with pkgs; [
-            haskellPackages.ghc
+            haskell.packages.ghc924.ghc
             pkgs.haskell-language-server
             cabal-install
           ];
