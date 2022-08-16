@@ -23,12 +23,12 @@ import System.FilePath ((</>))
 import qualified System.FilePath as FilePath
 
 data Store = Store
-  { keyPath :: Key -> FilePath,
-    get :: Key -> IO (Maybe Object),
-    put :: Object -> IO Key,
-    delete :: Key -> IO Bool,
-    getMemo :: Key -> IO (Maybe Key),
-    putMemo :: Key -> Key -> IO ()
+  { keyPath :: Key -> FilePath
+  , get :: Key -> IO (Maybe Object)
+  , put :: Object -> IO Key
+  , delete :: Key -> IO Bool
+  , getMemo :: Key -> IO (Maybe Key)
+  , putMemo :: Key -> Key -> IO ()
   }
 
 new :: FilePath -> FilePath -> IO Store
@@ -43,7 +43,7 @@ new storePath dbPath = do
   dbWriteLock <- newMVar ()
 
   let self :: Store
-      self = Store {keyPath, get, put, delete, getMemo, putMemo}
+      self = Store{keyPath, get, put, delete, getMemo, putMemo}
 
       keyPath :: Key -> FilePath
       keyPath key =
