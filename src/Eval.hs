@@ -5,6 +5,7 @@ import Control.Monad.IO.Class (MonadIO, liftIO)
 import qualified Data.ByteString as ByteString
 import qualified Data.Maybe as Maybe
 import Data.Text (Text)
+import qualified Data.Text as Text
 import Expr (Expr)
 import qualified Expr
 import Store (Store, put)
@@ -19,6 +20,8 @@ eval store ctx expr =
       pure . Maybe.fromMaybe undefined $ lookup var ctx
     Expr.Lam name body ->
       pure $ Value.Lam ctx name body
+    Expr.String str ->
+      pure $ Value.String str
     Expr.Let name value body -> do
       value' <- eval store ctx value
       eval store ((name, value') : ctx) body
@@ -60,6 +63,11 @@ eval store ctx expr =
           liftIO $ Value.Action <$> store.put (Store.Action $ Action inputs' builder')
         _ ->
           undefined
-    Expr.File filePath -> do
-      contents <- liftIO $ ByteString.readFile filePath
-      liftIO $ Value.Object <$> store.put (Store.Object contents)
+    Expr.File path -> do
+      path' <- eval store ctx path
+      case path' of
+        Value.String filePath -> do
+          contents <- liftIO . ByteString.readFile $ Text.unpack filePath
+          liftIO $ Value.Object <$> store.put (Store.Object contents)
+        _ ->
+          error $ "expected string, got " <> show path'

@@ -15,6 +15,7 @@ data Expr
     action { inputs, builder } : output
     -}
     Action Expr
-  | File FilePath
+  | File Expr
+  | String Text
   | Let Text Expr Expr
   deriving (Eq, Show)
