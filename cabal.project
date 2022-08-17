@@ -1,0 +1,3 @@
+packages:
+  ./mininix-store
+  ./mininix-buildlang
