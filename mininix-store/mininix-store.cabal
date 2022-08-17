@@ -27,6 +27,7 @@ library
     parsers,
     process, 
     stm,
+    sqlite-simple,
     text,
     unordered-containers
   hs-source-dirs:   src

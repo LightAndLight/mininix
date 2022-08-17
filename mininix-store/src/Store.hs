@@ -15,7 +15,9 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Char8 as ByteString.Char8
 import Data.Foldable (traverse_)
+import Data.Maybe (Maybe (Nothing))
 import qualified Data.Text.Encoding as Text.Encoding
+import qualified Database.SQLite.Simple as Sqlite
 import Key (Key (..))
 import qualified Key
 import qualified System.Directory as Directory
@@ -34,13 +36,14 @@ data Store = Store
 new :: FilePath -> FilePath -> IO Store
 new storePath dbPath = do
   dbExists <- Directory.doesFileExist dbPath
-  unless dbExists $ Json.encodeFile @[(Key, Key)] dbPath []
+  unless dbExists $
+    Sqlite.withConnection dbPath $ \conn ->
+      Sqlite.execute_ conn "CREATE TABLE action_outputs (action_hash TEXT PRIMARY KEY, output_hash TEXT NOT NULL)"
 
   storeExists <- Directory.doesDirectoryExist storePath
   unless storeExists $ Directory.createDirectory storePath
 
   storeWriteLock <- newMVar ()
-  dbWriteLock <- newMVar ()
 
   let self :: Store
       self = Store{keyPath, get, put, delete, getMemo, putMemo}
@@ -99,21 +102,20 @@ new storePath dbPath = do
 
       getMemo :: Key -> IO (Maybe Key)
       getMemo key = do
-        database <- either error pure =<< Json.eitherDecodeFileStrict @[(Key, Key)] dbPath
-        case lookup key database of
-          Just value ->
-            pure $ Just value
-          Nothing ->
+        results <- Sqlite.withConnection dbPath $ \conn ->
+          Sqlite.query conn "SELECT output_hash FROM action_outputs WHERE action_hash = ?" (Sqlite.Only key)
+        case results of
+          [] ->
             pure Nothing
+          [Sqlite.Only outputKey] ->
+            pure $ Just outputKey
+          _ ->
+            undefined
 
       putMemo :: Key -> Key -> IO ()
       putMemo key value = do
-        takeMVar dbWriteLock
-
-        database <- either error pure =<< Json.eitherDecodeFileStrict @[(Key, Key)] dbPath
-        Json.encodeFile dbPath ((key, value) : database)
-
-        putMVar dbWriteLock ()
+        Sqlite.withConnection dbPath $ \conn ->
+          Sqlite.execute conn "INSERT INTO action_outputs (action_hash, output_hash) VALUES (?, :)" (key, value)
 
   pure self
 
