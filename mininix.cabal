@@ -8,6 +8,7 @@ library
   exposed-modules:
     Action
     Base32
+    Builder
     Builder.Logging
     Builder.Parallel
     Check
@@ -60,6 +61,7 @@ executable mininix
     containers,
     directory,
     mininix,
+    trifecta,
     process,
     stm,
     text

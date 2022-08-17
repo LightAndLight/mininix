@@ -10,11 +10,15 @@ module Main where
 
 import Builder (buildKey, getDependencyGraph)
 import Builder.Parallel (buildInParallel)
+import Check (check)
 import qualified Eval
-import qualified Expr
 import Key (Key)
+import qualified Parser
 import Store (Store)
 import qualified Store
+import System.Exit (exitFailure)
+import Text.Trifecta (ErrInfo (_errDoc), Result (..), parseFromFileEx)
+import Type (Type (..))
 import qualified Value
 import Prelude hiding (log)
 
@@ -40,47 +44,25 @@ build store key = do
 main :: IO ()
 main = do
   store <- Store.new "./store" "database.json"
-  action <-
-    Eval.eval store [] $
-      {-
-        action {
-          inputs = {}
-          builder = file "./builder.sh"
-        }
-      -}
-      Expr.Let
-        "hello"
-        ( Expr.Action
-            ( Expr.Record
-                [ ("inputs", Expr.Record [])
-                , ("builder", Expr.File "./hello.sh")
-                ]
-            )
-        )
-        . Expr.Let
-          "goodbye"
-          ( Expr.Action
-              ( Expr.Record
-                  [ ("inputs", Expr.Record [])
-                  , ("builder", Expr.File "./goodbye.sh")
-                  ]
-              )
-          )
-        $ Expr.Action
-          ( Expr.Record
-              [
-                ( "inputs"
-                , Expr.Record
-                    [ ("hello", Expr.Var "hello")
-                    , ("goodbye", Expr.Var "goodbye")
-                    ]
-                )
-              , ("builder", Expr.File "./concat.sh")
-              ]
-          )
+  result <- parseFromFileEx Parser.expr "test.mini"
 
-  case action of
-    Value.Action key -> do
-      outputKey <- build store key
-      putStrLn $ "built " <> store.keyPath outputKey
+  syntax <- case result of
+    Failure err -> do
+      print err._errDoc
+      exitFailure
+    Success syntax ->
+      pure syntax
+
+  expr <- case check mempty syntax TAction of
+    Left err -> error $ show err
+    Right expr -> pure expr
+
+  action <- Eval.eval store [] expr
+
+  key <- case action of
+    Value.Action key ->
+      pure key
     _ -> undefined
+
+  outputKey <- build store key
+  putStrLn $ "built " <> store.keyPath outputKey
