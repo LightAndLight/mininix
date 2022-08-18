@@ -1,4 +1,4 @@
-module Builder.Parallel (buildInParallel, BuildLogger (..)) where
+module Builder.Parallel (buildInParallel, BuildLogger (..), ThreadError (..)) where
 
 import Action (Action (..))
 import Builder.Logging (BuildLogger (..))
@@ -10,13 +10,15 @@ import Control.Concurrent.STM.TVar (TVar, modifyTVar, newTVarIO, readTVar, state
 import Control.Exception (SomeException, try)
 import Control.Monad.Loops (whileJust_)
 import qualified Data.Either as Either
-import Data.Foldable (for_, traverse_)
+import Data.Foldable (traverse_)
 import qualified Data.List as List
 import qualified Data.Maybe as Maybe
 import Key (Key)
+import Store (Store (..))
 import Prelude hiding (error, log)
 
 data ThreadError = ThreadError {threadId :: Int, value :: SomeException}
+  deriving (Show)
 
 data ParBuildState = ParBuildState
   { threadsRunning :: TVar Int
@@ -50,8 +52,8 @@ getNextOutput parBuildState =
     jobsRunning <- readTVar parBuildState.threadsRunning
     if jobsRunning == 0 then pure Nothing else retry
 
-buildInParallel :: (BuildLogger -> Key -> IO ()) -> [(Action, Key, [Key])] -> IO ()
-buildInParallel buildKey input = do
+buildInParallel :: (BuildLogger -> Key -> IO ()) -> Store -> [(Action, Key, [Key])] -> Key -> IO (Either ThreadError Key)
+buildInParallel buildKey store input key = do
   threads <- getNumCapabilities
   putStrLn $ "using " <> show threads <> " thread" <> (if threads == 1 then "" else "s")
 
@@ -77,7 +79,9 @@ buildInParallel buildKey input = do
 
   whileJust_ (atomically $ getNextOutput parBuildState) putStr
   mError <- atomically $ readTVar error
-  for_ mError $ \err -> putStrLn $ "thread " <> show err.threadId <> ": " <> show err.value
+  case mError of
+    Nothing -> maybe undefined (pure . Right) =<< store.getMemo key
+    Just err -> pure $ Left err
  where
   isEmpty :: TVar [(Action, Key, [Key])] -> STM Bool
   isEmpty = fmap null . readTVar
@@ -107,7 +111,7 @@ buildInParallel buildKey input = do
         continue $ processTask exit continue parBuildState nextTask threadId
 
   processTask :: IO a -> (IO a -> IO a) -> ParBuildState -> Key -> Int -> IO a
-  processTask exit continue parBuildState key threadId = do
+  processTask exit continue parBuildState taskKey threadId = do
     hasError <- atomically $ checkIfError parBuildState
     if hasError
       then exit
@@ -118,7 +122,7 @@ buildInParallel buildKey input = do
                   parBuildState.output
                   ("thread " <> show threadId <> ": " <> str)
 
-        result <- try $ buildKey BuildLogger{log, logLine = log . (++ "\n")} key
+        result <- try $ buildKey BuildLogger{log, logLine = log . (++ "\n")} taskKey
         case result of
           Left err -> do
             atomically . writeTVar parBuildState.error $ Just ThreadError{threadId, value = err}
@@ -128,7 +132,7 @@ buildInParallel buildKey input = do
               atomically $
                 stateTVar
                   parBuildState.graph
-                  (partitionQueueable . fmap (deleteMatchingDependencies (== key)))
+                  (partitionQueueable . fmap (deleteMatchingDependencies (== taskKey)))
 
             case queueable of
               [] ->

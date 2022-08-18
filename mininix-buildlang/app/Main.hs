@@ -9,7 +9,7 @@
 module Main where
 
 import Builder (buildKey, getDependencyGraph)
-import Builder.Parallel (buildInParallel)
+import Builder.Parallel (ThreadError (..), buildInParallel)
 import Check (check)
 import qualified Eval
 import Key (Key)
@@ -33,9 +33,12 @@ build store key = do
       putStrLn "  no cached result found, building"
 
       dependencyGraph <- getDependencyGraph store key
-      buildInParallel (buildKey store) dependencyGraph
-
-      maybe undefined pure =<< store.getMemo key
+      result <- buildInParallel (buildKey store) store dependencyGraph key
+      case result of
+        Left err -> do
+          putStr $ "exception in thread " <> show err.threadId <> ":\n\n" <> unlines (("  " <>) <$> lines (show err.value))
+          System.Exit.exitFailure
+        Right outputKey -> pure outputKey
     Just outputKey -> do
       let outputPath = store.keyPath outputKey
       putStrLn $ "  cached result found (" <> outputPath <> "), skipping build"
