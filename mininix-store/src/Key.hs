@@ -13,7 +13,7 @@ instance ToJSON KeyType
 
 instance FromJSON KeyType
 
-data Key = Key {type_ :: KeyType, value :: Base32}
+data Key = Key {type_ :: KeyType, hash :: Base32}
   deriving (Eq, Ord, Show, Generic)
 
 instance ToJSON Key

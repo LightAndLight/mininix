@@ -15,7 +15,6 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Char8 as ByteString.Char8
 import Data.Foldable (traverse_)
-import Data.Maybe (Maybe (Nothing))
 import qualified Data.Text.Encoding as Text.Encoding
 import qualified Database.SQLite.Simple as Sqlite
 import Key (Key (..))
@@ -103,19 +102,19 @@ new storePath dbPath = do
       getMemo :: Key -> IO (Maybe Key)
       getMemo key = do
         results <- Sqlite.withConnection dbPath $ \conn ->
-          Sqlite.query conn "SELECT output_hash FROM action_outputs WHERE action_hash = ?" (Sqlite.Only key)
+          Sqlite.query conn "SELECT output_hash FROM action_outputs WHERE action_hash = ?" (Sqlite.Only key.hash)
         case results of
           [] ->
             pure Nothing
-          [Sqlite.Only outputKey] ->
-            pure $ Just outputKey
+          [Sqlite.Only (outputHash :: Base32)] ->
+            pure $ Just $ Key Key.Object outputHash
           _ ->
             undefined
 
       putMemo :: Key -> Key -> IO ()
-      putMemo key value = do
+      putMemo actionKey outputKey = do
         Sqlite.withConnection dbPath $ \conn ->
-          Sqlite.execute conn "INSERT INTO action_outputs (action_hash, output_hash) VALUES (?, :)" (key, value)
+          Sqlite.execute conn "INSERT INTO action_outputs (action_hash, output_hash) VALUES (?, ?)" (actionKey.hash, outputKey.hash)
 
   pure self
 

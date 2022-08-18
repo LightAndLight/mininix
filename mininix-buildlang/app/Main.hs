@@ -43,7 +43,7 @@ build store key = do
 
 main :: IO ()
 main = do
-  store <- Store.new "./store" "database.json"
+  store <- Store.new "./store" "./database.sqlite"
   result <- parseFromFileEx Parser.expr "test.mini"
 
   syntax <- case result of
