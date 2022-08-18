@@ -9,5 +9,6 @@ data Value
   | Object Key
   | Lam [(Text, Value)] Text Expr
   | Record [(Text, Value)]
+  | Array [Value]
   | String Text
   deriving (Eq, Show)

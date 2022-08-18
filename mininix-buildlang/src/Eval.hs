@@ -43,24 +43,31 @@ eval store ctx expr =
           pure . Maybe.fromMaybe undefined $ lookup field fields
         _ ->
           undefined
-    Expr.Action args -> do
-      args' <- eval store ctx args
-      case args' of
-        Value.Record [("inputs", Value.Record inputs), ("builder", builder)] -> do
-          inputs' <-
+    Expr.Action action -> do
+      action' <- eval store ctx action
+      case action' of
+        Value.Record [("env", Value.Record env), ("args", Value.Array args), ("builder", builder)] -> do
+          env' <-
             traverse
               ( \(inputName, input) -> case input of
                   Value.Action key -> pure (inputName, key)
                   _ -> undefined
               )
-              inputs
+              env
+          args' <-
+            traverse
+              ( \arg -> case arg of
+                  Value.Action key -> pure key
+                  _ -> undefined
+              )
+              args
           builder' <-
             case builder of
               Value.Object key ->
                 pure key
               _ ->
                 undefined
-          liftIO $ Value.Action <$> store.put (Store.Action $ Action inputs' builder')
+          liftIO $ Value.Action <$> store.put (Store.Action $ Action{env = env', args = args', builder = builder'})
         _ ->
           undefined
     Expr.File path -> do
@@ -71,3 +78,6 @@ eval store ctx expr =
           liftIO $ Value.Object <$> store.put (Store.Object contents)
         _ ->
           error $ "expected string, got " <> show path'
+    Expr.Array items -> do
+      items' <- traverse (eval store ctx) items
+      pure $ Value.Array items'

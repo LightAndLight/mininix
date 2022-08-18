@@ -8,4 +8,5 @@ data Type
   | TString
   | TAction
   | TArtifact
+  | TArray Type
   deriving (Eq, Show)

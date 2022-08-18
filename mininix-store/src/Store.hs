@@ -1,6 +1,6 @@
 module Store (Store (..), new, Object (..), hashObject) where
 
-import Action (Action)
+import Action (Action (args, builder, env))
 import qualified Action
 import Base32 (Base32 (..))
 import qualified Base32
@@ -107,7 +107,7 @@ new storePath dbPath = do
           [] ->
             pure Nothing
           [Sqlite.Only (outputHash :: Base32)] ->
-            pure $ Just $ Key Key.Object outputHash
+            pure . Just $ Key Key.Object outputHash
           _ ->
             undefined
 
@@ -126,15 +126,24 @@ data Object
 hashObject :: Store -> Object -> ByteString
 hashObject store object =
   case object of
-    Action (Action.Action inputs builder) ->
+    Action Action.Action{env, args, builder} ->
       Sha256.finalize . flip execState Sha256.init $ do
         traverse_
           ( \(inputName, input) -> do
               modify $ \ctx -> Sha256.update ctx (Text.Encoding.encodeUtf8 inputName)
+
               let inputPath = store.keyPath input
               modify $ \ctx -> Sha256.update ctx (ByteString.Char8.pack inputPath)
           )
-          inputs
+          env
+
+        traverse_
+          ( \arg -> do
+              let inputPath = store.keyPath arg
+              modify $ \ctx -> Sha256.update ctx (ByteString.Char8.pack inputPath)
+          )
+          args
+
         let builderPath = store.keyPath builder
         modify $ \ctx -> Sha256.update ctx (ByteString.Char8.pack builderPath)
     Object contents ->

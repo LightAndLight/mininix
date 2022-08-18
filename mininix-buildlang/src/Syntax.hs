@@ -11,4 +11,5 @@ data Expr
   | Project Expr Text
   | String Text
   | Let Text Expr Expr
+  | Array [Expr] Type
   deriving (Eq, Show)

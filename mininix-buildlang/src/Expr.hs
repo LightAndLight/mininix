@@ -18,4 +18,5 @@ data Expr
   | File Expr
   | String Text
   | Let Text Expr Expr
+  | Array [Expr]
   deriving (Eq, Show)

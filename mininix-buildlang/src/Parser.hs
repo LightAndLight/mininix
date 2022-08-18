@@ -7,7 +7,7 @@ import Data.Text (Text)
 import Syntax (Expr (..))
 import Text.Parser.Char (alphaNum, char, lower)
 import Text.Parser.Combinators (sepBy)
-import Text.Parser.Token (IdentifierStyle (..), TokenParsing, braces, comma, parens, stringLiteral, symbol, symbolic)
+import Text.Parser.Token (IdentifierStyle (..), TokenParsing, braces, brackets, comma, parens, stringLiteral, symbol, symbolic)
 import qualified Text.Parser.Token as Token
 import qualified Text.Parser.Token.Highlight as Highlight
 import Type (Type (..))
@@ -43,20 +43,22 @@ expr =
   atom =
     Var <$> ident
       <|> Record <$> braces (recordField `sepBy` comma)
+      <|> Array <$> brackets (expr `sepBy` comma) <* symbolic '@' <*> typeAtom
       <|> String <$> stringLiteral
 
   recordField =
     (,) <$> ident <* symbolic '=' <*> expr
 
-type_ :: (Monad m, TokenParsing m) => m Type
-type_ =
-  foldr TArrow <$> atom <*> many (symbol "->" *> atom)
+typeAtom :: (Monad m, TokenParsing m) => m Type
+typeAtom =
+  TRecord <$> braces (recordField `sepBy` comma)
+    <|> TString <$ symbol "String"
+    <|> TAction <$ symbol "Action"
+    <|> TArtifact <$ symbol "Artifact"
  where
-  atom =
-    TRecord <$> braces (recordField `sepBy` comma)
-      <|> TString <$ symbol "String"
-      <|> TAction <$ symbol "Action"
-      <|> TArtifact <$ symbol "Artifact"
-
   recordField =
     (,) <$> ident <* symbolic '=' <*> type_
+
+type_ :: (Monad m, TokenParsing m) => m Type
+type_ =
+  foldr TArrow <$> typeAtom <*> many (symbol "->" *> typeAtom)

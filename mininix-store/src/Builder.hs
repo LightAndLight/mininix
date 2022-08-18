@@ -27,8 +27,10 @@ getDependencyGraph store key =
   go k = do
     mObject <- store.get k
     case mObject of
-      Just (Store.Action a@(Action inputs _)) ->
-        Map.insert k (a, snd <$> inputs) . mconcat <$> traverse (go . snd) inputs
+      Just (Store.Action action@Action{env, args, builder = _}) -> do
+        envDeps <- mconcat <$> traverse (go . snd) env
+        argsDeps <- mconcat <$> traverse go args
+        pure $ Map.insert k (action, snd <$> env) (envDeps <> argsDeps)
       _ ->
         pure mempty
 
@@ -47,28 +49,33 @@ buildKey store buildLogger key = do
 
       object <- Maybe.fromMaybe undefined <$> store.get key
       case object of
-        Store.Action (Action inputs builderKey) -> do
-          env <-
+        Store.Action Action{env, args, builder} -> do
+          env' <-
             traverse
               (\(inputName, input) -> (Text.unpack inputName,) <$> lookupInputResult input)
-              inputs
+              env
 
-          let builderExecutable = store.keyPath builderKey
+          args' <-
+            traverse
+              (\arg -> lookupInputResult arg)
+              args
+
+          let builderExecutable = store.keyPath builder
           setPermissionExecutable builderExecutable
 
-          buildLogger.logLine $ "running builder: " <> displayBuilderCommand env builderExecutable
+          buildLogger.logLine $ "running builder: " <> displayBuilderCommand env' builderExecutable
 
           (_mhStdin, mhStdout, mhStderr, processHandle) <-
             liftIO $
               Process.createProcess
                 ( ( Process.proc
                       builderExecutable
-                      []
+                      args'
                   )
                     { Process.std_in = Process.Inherit
                     , Process.std_out = Process.CreatePipe
                     , Process.std_err = Process.CreatePipe
-                    , Process.env = Just env
+                    , Process.env = Just env'
                     }
                 )
 

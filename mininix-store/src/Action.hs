@@ -5,7 +5,11 @@ import Data.Text (Text)
 import GHC.Generics (Generic)
 import Key (Key)
 
-data Action = Action {inputs :: [(Text, Key)], builder :: Key}
+data Action = Action
+  { env :: [(Text, Key)]
+  , args :: [Key]
+  , builder :: Key
+  }
   deriving (Eq, Show, Generic)
 
 instance ToJSON Action

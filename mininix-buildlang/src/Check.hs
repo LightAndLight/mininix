@@ -20,6 +20,7 @@ data Error
   | FileMissingArgument
   | TypeMismatch {expected :: Type, actual :: Type}
   | InvalidArguments {expectedArguments :: [Text], actualArguments :: [Text]}
+  | Can'tInferArray
   deriving (Eq, Show)
 
 check :: HashMap Text Type -> Syntax.Expr -> Type -> Either Error Expr.Expr
@@ -60,27 +61,29 @@ infer ctx expr =
               pure fields
             _ -> Left $ ExpectedRecord{actual = xTy}
 
-          (inputsTy, builderTy) <- case fields of
-            [("inputs", inputsTy), ("builder", builderTy)] ->
-              pure (inputsTy, builderTy)
+          (envTy, argsTy, builderTy) <- case fields of
+            [("env", envTy), ("args", argsTy), ("builder", builderTy)] ->
+              pure (envTy, argsTy, builderTy)
             _ ->
               Left $
                 InvalidArguments
-                  { expectedArguments = ["inputs", "builder"]
+                  { expectedArguments = ["env", "args", "builder"]
                   , actualArguments = fst <$> fields
                   }
 
-          inputs <- case inputsTy of
-            TRecord inputs ->
-              pure inputs
+          env <- case envTy of
+            TRecord env ->
+              pure env
             _ ->
-              Left $ ExpectedRecord{actual = inputsTy}
+              Left $ ExpectedRecord{actual = envTy}
 
           traverse_
             ( \(_, input) ->
                 unless (input == TAction) $ Left ExpectedAction{actual = input}
             )
-            inputs
+            env
+
+          unless (argsTy == TArray TString) $ Left TypeMismatch{expected = TArray TString, actual = envTy}
 
           unless (builderTy == TArtifact) $ Left TypeMismatch{expected = TArtifact, actual = builderTy}
 
@@ -119,3 +122,6 @@ infer ctx expr =
       (value', valueTy) <- infer ctx value
       (rest', restTy) <- infer (HashMap.insert name valueTy ctx) rest
       pure (Expr.Let name value' rest', restTy)
+    Syntax.Array items itemTy -> do
+      items' <- traverse (\item -> check ctx item itemTy) items
+      pure (Expr.Array items', TArray itemTy)
