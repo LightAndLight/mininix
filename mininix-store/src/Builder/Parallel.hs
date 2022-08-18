@@ -6,19 +6,24 @@ import Control.Applicative ((<|>))
 import Control.Concurrent (forkIO, getNumCapabilities)
 import Control.Concurrent.STM (STM, atomically, retry)
 import Control.Concurrent.STM.TQueue (TQueue, newTQueueIO, readTQueue, writeTQueue)
-import Control.Concurrent.STM.TVar (TVar, modifyTVar, newTVarIO, readTVar, stateTVar)
+import Control.Concurrent.STM.TVar (TVar, modifyTVar, newTVarIO, readTVar, stateTVar, writeTVar)
+import Control.Exception (SomeException, try)
 import Control.Monad.Loops (whileJust_)
 import qualified Data.Either as Either
-import Data.Foldable (traverse_)
+import Data.Foldable (for_, traverse_)
 import qualified Data.List as List
+import qualified Data.Maybe as Maybe
 import Key (Key)
-import Prelude hiding (log)
+import Prelude hiding (error, log)
+
+data ThreadError = ThreadError {threadId :: Int, value :: SomeException}
 
 data ParBuildState = ParBuildState
   { threadsRunning :: TVar Int
   , tasks :: TQueue Key
   , output :: TQueue String
   , graph :: TVar [(Action, Key, [Key])]
+  , error :: TVar (Maybe ThreadError)
   }
 
 partitionQueueable :: [(action, key, [dependency])] -> ([key], [(action, key, [dependency])])
@@ -56,55 +61,78 @@ buildInParallel buildKey input = do
   output :: TQueue String <- newTQueueIO
   graph :: TVar [(Action, Key, [Key])] <- newTVarIO input
   threadsRunning :: TVar Int <- newTVarIO jobs
+  error :: TVar (Maybe ThreadError) <- newTVarIO Nothing
 
   atomically $ do
     queueable <- stateTVar graph partitionQueueable
     traverse_ (writeTQueue tasks) queueable
 
-  let parBuildState = ParBuildState{threadsRunning, tasks, output, graph}
+  let parBuildState = ParBuildState{threadsRunning, tasks, output, graph, error}
+  let exit = atomically $ modifyTVar parBuildState.threadsRunning (subtract 1)
+  let continue = id
+
   traverse_
-    (forkIO . waitForTask parBuildState)
+    (forkIO . waitForTask exit continue parBuildState)
     [0 .. jobs - 1]
 
   whileJust_ (atomically $ getNextOutput parBuildState) putStr
+  mError <- atomically $ readTVar error
+  for_ mError $ \err -> putStrLn $ "thread " <> show err.threadId <> ": " <> show err.value
  where
   isEmpty :: TVar [(Action, Key, [Key])] -> STM Bool
   isEmpty = fmap null . readTVar
 
+  checkIfError :: ParBuildState -> STM Bool
+  checkIfError parBuildState =
+    Maybe.isJust <$> readTVar parBuildState.error
+
   getNextTask :: ParBuildState -> STM (Maybe Key)
   getNextTask parBuildState =
-    Just <$> readTQueue parBuildState.tasks <|> do
-      empty <- isEmpty parBuildState.graph
-      if empty then pure Nothing else retry
+    ( do
+        hasError <- checkIfError parBuildState
+        if hasError then pure Nothing else retry
+    )
+      <|> Just <$> readTQueue parBuildState.tasks
+      <|> do
+        empty <- isEmpty parBuildState.graph
+        if empty then pure Nothing else retry
 
-  waitForTask :: ParBuildState -> Int -> IO ()
-  waitForTask parBuildState threadId = do
+  waitForTask :: IO a -> (IO a -> IO a) -> ParBuildState -> Int -> IO a
+  waitForTask exit continue parBuildState threadId = do
     mNextTask <- atomically $ getNextTask parBuildState
     case mNextTask of
       Nothing -> do
-        atomically $ modifyTVar parBuildState.threadsRunning (subtract 1)
+        exit
       Just nextTask ->
-        processTask parBuildState nextTask threadId
+        continue $ processTask exit continue parBuildState nextTask threadId
 
-  processTask :: ParBuildState -> Key -> Int -> IO ()
-  processTask parBuildState key threadId = do
-    let log str =
-          atomically $
-            writeTQueue
-              parBuildState.output
-              ("thread " <> show threadId <> ": " <> str)
+  processTask :: IO a -> (IO a -> IO a) -> ParBuildState -> Key -> Int -> IO a
+  processTask exit continue parBuildState key threadId = do
+    hasError <- atomically $ checkIfError parBuildState
+    if hasError
+      then exit
+      else do
+        let log str =
+              atomically $
+                writeTQueue
+                  parBuildState.output
+                  ("thread " <> show threadId <> ": " <> str)
 
-    buildKey BuildLogger{log, logLine = log . (++ "\n")} key
+        result <- try $ buildKey BuildLogger{log, logLine = log . (++ "\n")} key
+        case result of
+          Left err -> do
+            atomically . writeTVar parBuildState.error $ Just ThreadError{threadId, value = err}
+            exit
+          Right () -> do
+            queueable <-
+              atomically $
+                stateTVar
+                  parBuildState.graph
+                  (partitionQueueable . fmap (deleteMatchingDependencies (== key)))
 
-    queueable <-
-      atomically $
-        stateTVar
-          parBuildState.graph
-          (partitionQueueable . fmap (deleteMatchingDependencies (== key)))
-
-    case queueable of
-      [] ->
-        waitForTask parBuildState threadId
-      nextTask : rest -> do
-        atomically $ traverse_ (writeTQueue parBuildState.tasks) rest
-        processTask parBuildState nextTask threadId
+            case queueable of
+              [] ->
+                continue $ waitForTask exit continue parBuildState threadId
+              nextTask : rest -> do
+                atomically $ traverse_ (writeTQueue parBuildState.tasks) rest
+                continue $ processTask exit continue parBuildState nextTask threadId

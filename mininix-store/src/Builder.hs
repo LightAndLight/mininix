@@ -3,7 +3,6 @@ module Builder (buildKey, getDependencyGraph) where
 import Action (Action (..))
 import Builder.Logging (BuildLogger (..))
 import Control.Monad (unless)
-import Control.Monad.IO.Class (liftIO)
 import qualified Data.ByteString as ByteString
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -37,7 +36,7 @@ getDependencyGraph store key =
 buildKey :: Store -> BuildLogger -> Key -> IO ()
 buildKey store buildLogger key = do
   let path = store.keyPath key
-  liftIO . buildLogger.logLine $ "running action " <> path
+  buildLogger.logLine $ "running action " <> path
 
   mOutputKey <- store.getMemo key
   case mOutputKey of
@@ -66,18 +65,17 @@ buildKey store buildLogger key = do
           buildLogger.logLine $ "running builder: " <> displayBuilderCommand env' builderExecutable
 
           (_mhStdin, mhStdout, mhStderr, processHandle) <-
-            liftIO $
-              Process.createProcess
-                ( ( Process.proc
-                      builderExecutable
-                      args'
-                  )
-                    { Process.std_in = Process.Inherit
-                    , Process.std_out = Process.CreatePipe
-                    , Process.std_err = Process.CreatePipe
-                    , Process.env = Just env'
-                    }
+            Process.createProcess
+              ( ( Process.proc
+                    builderExecutable
+                    args'
                 )
+                  { Process.std_in = Process.Inherit
+                  , Process.std_out = Process.CreatePipe
+                  , Process.std_err = Process.CreatePipe
+                  , Process.env = Just env'
+                  }
+              )
 
           case (mhStdout, mhStderr) of
             (Just hStdout, Just hStderr) -> do

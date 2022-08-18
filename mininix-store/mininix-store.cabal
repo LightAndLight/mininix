@@ -37,6 +37,7 @@ library
     DeriveGeneric
     FlexibleContexts
     FunctionalDependencies
+    DuplicateRecordFields
     GeneralizedNewtypeDeriving
     MultiParamTypeClasses
     NamedFieldPuns

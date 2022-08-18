@@ -61,7 +61,10 @@ new storePath dbPath = do
           then do
             liftIO $ case key of
               Key Key.Action _ -> do
-                action <- either error pure =<< Json.eitherDecodeFileStrict @Action path
+                result <- Json.eitherDecodeFileStrict @Action path
+                action <- case result of
+                  Left err -> error $ "failed to decode " <> path <> ": " <> err
+                  Right action -> pure action
                 pure . Just $ Action action
               Key Key.Object _ -> Just . Object <$> ByteString.readFile path
           else pure Nothing
