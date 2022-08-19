@@ -1,8 +1,7 @@
-module Builder (buildKey, getDependencyGraph) where
+module Builder (buildKey, getDependencyGraph, BuildError (..)) where
 
 import Action (Action (..))
 import Builder.Logging (BuildLogger (..))
-import Control.Monad (unless)
 import qualified Data.ByteString as ByteString
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -33,7 +32,15 @@ getDependencyGraph store key =
       _ ->
         pure mempty
 
-buildKey :: Store -> BuildLogger -> Key -> IO ()
+data BuildError = BuildError
+  { env :: [(String, String)]
+  , args :: [String]
+  , builder :: String
+  , exitCode :: ExitCode
+  }
+  deriving (Eq, Show)
+
+buildKey :: Store -> BuildLogger -> Key -> IO (Either BuildError ())
 buildKey store buildLogger key = do
   let path = store.keyPath key
   buildLogger.logLine $ "running action " <> path
@@ -43,6 +50,7 @@ buildKey store buildLogger key = do
     Just outputKey -> do
       let outputPath = store.keyPath outputKey
       buildLogger.logLine $ "  cached result found (" <> outputPath <> "), skipping build"
+      pure $ Right ()
     Nothing -> do
       buildLogger.logLine "  no cached result found, building"
 
@@ -83,10 +91,13 @@ buildKey store buildLogger key = do
               buildLogger.log =<< System.IO.hGetContents hStderr
 
               exitCode <- Process.waitForProcess processHandle
-              unless (exitCode == ExitSuccess) . error $ builderExecutable <> " failed"
+              if exitCode == ExitSuccess
+                then do
+                  outputKey <- store.put $ Store.Object stdout
+                  store.putMemo key outputKey
 
-              outputKey <- store.put $ Store.Object stdout
-              store.putMemo key outputKey
+                  pure $ Right ()
+                else pure . Left $ BuildError{env = env', args = args', builder = builderExecutable, exitCode}
             _ ->
               undefined
         _ ->

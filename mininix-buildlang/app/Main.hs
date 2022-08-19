@@ -9,14 +9,15 @@
 module Main where
 
 import Builder (buildKey, getDependencyGraph)
-import Builder.Parallel (ThreadError (..), buildInParallel)
+import qualified Builder
+import Builder.Parallel (ParBuildError (..), buildInParallel)
 import Check (check)
 import qualified Eval
 import Key (Key)
 import qualified Parser
 import Store (Store)
 import qualified Store
-import System.Exit (exitFailure)
+import System.Exit (ExitCode (..), exitFailure)
 import Text.Trifecta (ErrInfo (_errDoc), Result (..), parseFromFileEx)
 import Type (Type (..))
 import qualified Value
@@ -36,7 +37,22 @@ build store key = do
       result <- buildInParallel (buildKey store) store dependencyGraph key
       case result of
         Left err -> do
-          putStr $ "exception in thread " <> show err.threadId <> ":\n\n" <> unlines (("  " <>) <$> lines (show err.value))
+          case err of
+            Exception{threadId, value} ->
+              putStr $ "exception in thread " <> show threadId <> ":\n\n" <> unlines (("  " <>) <$> lines (show value))
+            BuildError{threadId, buildError} ->
+              putStr $
+                "error in thread "
+                  <> show threadId
+                  <> ": "
+                  <> "command "
+                  <> foldMap (\(k, v) -> k <> "=" <> v <> " ") buildError.env
+                  <> buildError.builder
+                  <> unwords buildError.args
+                  <> " exited with status "
+                  <> case buildError.exitCode of
+                    ExitSuccess -> "0"
+                    ExitFailure n -> show n
           System.Exit.exitFailure
         Right outputKey -> pure outputKey
     Just outputKey -> do

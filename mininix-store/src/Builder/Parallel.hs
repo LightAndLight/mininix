@@ -1,6 +1,7 @@
-module Builder.Parallel (buildInParallel, BuildLogger (..), ThreadError (..)) where
+module Builder.Parallel (buildInParallel, BuildLogger (..), ParBuildError (..)) where
 
 import Action (Action (..))
+import Builder (BuildError)
 import Builder.Logging (BuildLogger (..))
 import Control.Applicative ((<|>))
 import Control.Concurrent (forkIO, getNumCapabilities)
@@ -17,7 +18,9 @@ import Key (Key)
 import Store (Store (..))
 import Prelude hiding (error, log)
 
-data ThreadError = ThreadError {threadId :: Int, value :: SomeException}
+data ParBuildError
+  = Exception {threadId :: Int, value :: SomeException}
+  | BuildError {threadId :: Int, buildError :: BuildError}
   deriving (Show)
 
 data ParBuildState = ParBuildState
@@ -25,7 +28,7 @@ data ParBuildState = ParBuildState
   , tasks :: TQueue Key
   , output :: TQueue String
   , graph :: TVar [(Action, Key, [Key])]
-  , error :: TVar (Maybe ThreadError)
+  , error :: TVar (Maybe ParBuildError)
   }
 
 partitionQueueable :: [(action, key, [dependency])] -> ([key], [(action, key, [dependency])])
@@ -52,7 +55,7 @@ getNextOutput parBuildState =
     jobsRunning <- readTVar parBuildState.threadsRunning
     if jobsRunning == 0 then pure Nothing else retry
 
-buildInParallel :: (BuildLogger -> Key -> IO ()) -> Store -> [(Action, Key, [Key])] -> Key -> IO (Either ThreadError Key)
+buildInParallel :: (BuildLogger -> Key -> IO (Either BuildError ())) -> Store -> [(Action, Key, [Key])] -> Key -> IO (Either ParBuildError Key)
 buildInParallel buildKey store input key = do
   threads <- getNumCapabilities
   putStrLn $ "using " <> show threads <> " thread" <> (if threads == 1 then "" else "s")
@@ -63,7 +66,7 @@ buildInParallel buildKey store input key = do
   output :: TQueue String <- newTQueueIO
   graph :: TVar [(Action, Key, [Key])] <- newTVarIO input
   threadsRunning :: TVar Int <- newTVarIO jobs
-  error :: TVar (Maybe ThreadError) <- newTVarIO Nothing
+  error :: TVar (Maybe ParBuildError) <- newTVarIO Nothing
 
   atomically $ do
     queueable <- stateTVar graph partitionQueueable
@@ -122,21 +125,26 @@ buildInParallel buildKey store input key = do
                   parBuildState.output
                   ("thread " <> show threadId <> ": " <> str)
 
-        result <- try $ buildKey BuildLogger{log, logLine = log . (++ "\n")} taskKey
-        case result of
+        exceptionOrResult <- try $ buildKey BuildLogger{log, logLine = log . (++ "\n")} taskKey
+        case exceptionOrResult of
           Left err -> do
-            atomically . writeTVar parBuildState.error $ Just ThreadError{threadId, value = err}
+            atomically . writeTVar parBuildState.error $ Just Exception{threadId, value = err}
             exit
-          Right () -> do
-            queueable <-
-              atomically $
-                stateTVar
-                  parBuildState.graph
-                  (partitionQueueable . fmap (deleteMatchingDependencies (== taskKey)))
+          Right result ->
+            case result of
+              Left buildError -> do
+                atomically . writeTVar parBuildState.error $ Just BuildError{threadId, buildError}
+                exit
+              Right () -> do
+                queueable <-
+                  atomically $
+                    stateTVar
+                      parBuildState.graph
+                      (partitionQueueable . fmap (deleteMatchingDependencies (== taskKey)))
 
-            case queueable of
-              [] ->
-                continue $ waitForTask exit continue parBuildState threadId
-              nextTask : rest -> do
-                atomically $ traverse_ (writeTQueue parBuildState.tasks) rest
-                continue $ processTask exit continue parBuildState nextTask threadId
+                case queueable of
+                  [] ->
+                    continue $ waitForTask exit continue parBuildState threadId
+                  nextTask : rest -> do
+                    atomically $ traverse_ (writeTQueue parBuildState.tasks) rest
+                    continue $ processTask exit continue parBuildState nextTask threadId
